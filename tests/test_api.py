@@ -46,6 +46,7 @@ async def test_docs_can_sign_webhook_requests(client: AsyncClient) -> None:
     assert response.status_code == 200
     assert 'id="webhook-secret"' in response.text
     assert "requestInterceptor: signWebhookRequest" in response.text
+    assert 'const method = (request.method || "").toUpperCase()' in response.text
     assert 'request.headers["X-Signature"] = signature' in response.text
     assert 'url.pathname !== "/webhooks/bank"' in response.text
     assert settings.webhook_secret not in response.text

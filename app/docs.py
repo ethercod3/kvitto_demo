@@ -72,7 +72,8 @@ def build_swagger_ui_html(app: FastAPI) -> HTMLResponse:
 
     async function signWebhookRequest(request) {{
       const url = new URL(request.url, window.location.origin);
-      if (request.method.toUpperCase() !== "POST" || url.pathname !== "/webhooks/bank") {{
+      const method = (request.method || "").toUpperCase();
+      if (method !== "POST" || url.pathname !== "/webhooks/bank") {{
         return request;
       }}
 
