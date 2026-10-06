@@ -10,6 +10,8 @@ WEBHOOK_SECRET=change-me docker compose up --build
 
 После запуска доступны API на `http://localhost:8000`, Swagger UI на `http://localhost:8000/docs` и healthcheck на `http://localhost:8000/health`.
 
+В Swagger UI над документацией есть поле `Webhook secret`. Введенное значение хранится только в памяти вкладки и автоматически используется для вычисления `X-Signature` при отправке `POST /webhooks/bank`. Для остальных запросов interceptor ничего не меняет.
+
 ## Локальный запуск
 
 Нужны Python 3.11+ и [uv](https://docs.astral.sh/uv/).
