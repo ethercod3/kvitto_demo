@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.responses import Response
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -22,8 +23,8 @@ app.include_router(api_router)
 
 
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui() -> object:
-    return build_swagger_ui_html(app)
+async def custom_swagger_ui(request: Request) -> Response:
+    return build_swagger_ui_html(request, app)
 
 
 @app.get("/health", tags=["system"])
