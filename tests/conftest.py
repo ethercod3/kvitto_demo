@@ -1,9 +1,9 @@
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from app.db.seed import seed_tariffs
 from app.db.session import get_session
@@ -12,12 +12,11 @@ from app.models.base import Base
 
 
 @pytest.fixture
-async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
+async def session_factory(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    database_path = tmp_path / "test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

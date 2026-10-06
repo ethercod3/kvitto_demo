@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -5,8 +6,13 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.db.seed import seed_tariffs
+from app.models.payment import Payment
+from app.models.tariff import Tariff
 
 
 async def create_payment(
@@ -73,6 +79,18 @@ async def test_tariffs_are_seeded(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tariff_seed_is_idempotent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await seed_tariffs(session)
+        await seed_tariffs(session)
+        count = await session.scalar(select(func.count()).select_from(Tariff))
+
+    assert count == 3
+
+
+@pytest.mark.asyncio
 async def test_create_payment_without_promo(client: AsyncClient) -> None:
     response = await create_payment(client)
 
@@ -81,6 +99,18 @@ async def test_create_payment_without_promo(client: AsyncClient) -> None:
     assert response.json()["discount"] == 0
     assert response.json()["status"] == "pending"
     assert response.json()["schedule"] is None
+    assert set(response.json()) == {
+        "id",
+        "status",
+        "tariff_id",
+        "amount",
+        "discount",
+        "method",
+        "installment_months",
+        "schedule",
+        "email",
+        "created_at",
+    }
 
 
 @pytest.mark.asyncio
@@ -124,13 +154,36 @@ async def test_installment_months_validation(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idempotency_returns_same_payment(client: AsyncClient) -> None:
+async def test_idempotency_returns_same_payment(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
     first = await create_payment(client, idempotency_key="checkout-42")
     second = await create_payment(client, idempotency_key="checkout-42")
 
     assert first.status_code == 201
     assert second.status_code == 200
     assert second.json()["id"] == first.json()["id"]
+    async with session_factory() as session:
+        count = await session.scalar(select(func.count()).select_from(Payment))
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_idempotent_requests_create_one_payment(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    first, second = await asyncio.gather(
+        create_payment(client, idempotency_key="concurrent-checkout"),
+        create_payment(client, idempotency_key="concurrent-checkout"),
+    )
+
+    assert sorted((first.status_code, second.status_code)) == [200, 201]
+    assert first.json()["id"] == second.json()["id"]
+    async with session_factory() as session:
+        count = await session.scalar(select(func.count()).select_from(Payment))
+    assert count == 1
 
 
 @pytest.mark.asyncio
@@ -163,6 +216,17 @@ async def test_webhook_rejects_invalid_signature(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_webhook_rejects_missing_signature(client: AsyncClient) -> None:
+    payment = (await create_payment(client)).json()
+    response = await client.post(
+        "/webhooks/bank",
+        json={"payment_id": payment["id"], "status": "succeeded"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_webhook_unknown_payment(client: AsyncClient) -> None:
     response = await signed_webhook(
         client, {"payment_id": str(uuid.uuid4()), "status": "succeeded"}
@@ -176,12 +240,14 @@ async def test_payment_filters(client: AsyncClient) -> None:
     await create_payment(client, email="two@example.com")
     await signed_webhook(client, {"payment_id": first["id"], "status": "succeeded"})
 
+    unfiltered = await client.get("/payments")
     by_email = await client.get("/payments", params={"email": "one@example.com"})
     by_status = await client.get("/payments", params={"status": "pending"})
     combined = await client.get(
         "/payments", params={"email": "one@example.com", "status": "succeeded"}
     )
 
+    assert len(unfiltered.json()) == 2
     assert [item["email"] for item in by_email.json()] == ["one@example.com"]
     assert all(item["status"] == "pending" for item in by_status.json())
     assert [item["id"] for item in combined.json()] == [first["id"]]
